@@ -7,6 +7,11 @@ There may be multiple reasons for wanting this. My reason was that I wanted to p
 while maintaining a modular structure within the project. The benefit of a fat aar file is that we can
 proguard the combined code instead of proguarding each and every subproject which is not that effective.
 
+**What doesn't work?**
+1. Manifest placeholders that are expected to be filled in by the application
+2. AIDL File merger - I do not use aidl files
+3. ?
+
 **Step 1: Apply the gradle file** 
 
 To use this simply copy the gradle file 'fat-aar.gradle' to your project directory and then
