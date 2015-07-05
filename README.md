@@ -2,6 +2,7 @@
 Gradle script that allows you to merge and embed dependencies in generted aar file. 
 
 **Why do I need is a fat AAR?**
+
 There may be multiple reasons for wanting this. My reason was that I wanted to publish a single library 
 while maintaining a modular structure within the project. The benefit of a fat aar file is that we can
 proguard the combined code instead of proguarding each and every subproject which is not that effective.
@@ -37,6 +38,7 @@ for the dependencies you want merged within the aar file. The resulting section 
 The dependencies with keyword `embedded` will be merged while the others will remain referenced as before.
 
 **Step 3: Remove embedded dependencies from exported dependency list**
+
 Now that you have embedded your sub projects into the main library, you need to ensure that anyone using 
 your library does not resolve the embedded projects as transitive dependencies. Otherwise you will get 
 duplicate class errors. 
@@ -48,9 +50,9 @@ your fat-library dependency as non transitive.
         transitive false
     }
 
-For external clients or use in another project; this can be done by removing these dependencies from the 
+For external clients or use in another project; this can be achieved by removing these dependencies from the 
 generated pom.xml file. How to automate that will depend on how you are generating the pom file. I use 
-`maven-publish` plugin. The sample `publish.gradle` file is also in the repository.
+`maven-publish` plugin with the following pom generator. The complete `publish.gradle` file is also in the repository.
 
     pom.withXml {
         def dependenciesNode = asNode().appendNode('dependencies')
