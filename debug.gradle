@@ -1,0 +1,46 @@
+/**
+ * This code is only meant for debugging and exploring what is happening when the build runs.
+ * You should not use it unless you want to understand the internals of anroid build system.
+ */
+
+afterEvaluate {
+    tasks.each {
+        task ->
+            task << {
+                checkNewFiles()
+            }
+            println task
+    }
+}
+
+ext.oldlist = new ArrayList<String>()
+
+void checkNewFiles() {
+    checkNewFiles(true)
+}
+
+void checkNewFiles(boolean print) {
+    List<String> newlist = new ArrayList<>();
+    readFileTree(file("build"), newlist)
+    for (String path : newlist) {
+        if (print && !oldlist.contains(path)) {
+            println "=== ADD: " + path
+        }
+    }
+    for (String path : oldlist) {
+        if (!newlist.contains(path)) {
+            println "=== SUB: " + path
+        }
+    }
+    oldlist.clear();
+    oldlist.addAll(newlist)
+}
+
+void readFileTree(File d, List l) {
+    for (File f : d.listFiles()) {
+        l.add(f.absolutePath)
+        if (f.isDirectory()) {
+            readFileTree(f, l)
+        }
+    }
+}
