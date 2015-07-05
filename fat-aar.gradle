@@ -1,0 +1,332 @@
+import com.android.annotations.NonNull
+import com.android.manifmerger.ManifestMerger2
+import com.android.manifmerger.ManifestMerger2.Invoker
+import com.android.manifmerger.ManifestMerger2.MergeType
+import com.android.manifmerger.MergingReport
+import com.android.manifmerger.PlaceholderEncoder
+import com.android.manifmerger.XmlDocument
+import com.android.utils.ILogger
+import com.google.common.base.Charsets
+import com.google.common.io.Files
+
+/**
+ * Fat AAR Lib generator v 0.1
+ */
+
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:1.2.3'
+        classpath 'com.android.tools:annotations:24.2.3'
+        classpath 'com.android.tools.build:manifest-merger:24.2.3'
+    }
+}
+
+configurations {
+    embedded
+}
+
+dependencies {
+    compile configurations.embedded
+}
+
+afterEvaluate {
+    // Merge Assets
+    generateReleaseAssets.doFirst { //Works
+        embedAssets()
+    }
+
+    // Merge compiled classes and jars
+    compileReleaseJava.doLast { //Perfect
+        embedJavaJars()
+    }
+
+    // Generate R.class for each embedded package
+    processReleaseResources.doLast { //Works?
+        embedRClassFiles()
+    }
+
+    // Merge Native libraries
+    packageReleaseJniLibs.doLast { //Perfect
+        embedJniLibs()
+    }
+
+    // Merge Embedded Manifests
+    processReleaseManifest.doLast { //Works?
+        embedManifests()
+    }
+
+    // Embed Resources by overwriting the inputResourceSets
+    packageReleaseResources.doFirst {
+        def oldInputResourceSet = packageReleaseResources.inputResourceSets
+        packageReleaseResources.conventionMapping.map("inputResourceSets") {
+            embedLibraryResources(oldInputResourceSet)
+        }
+    }
+
+    // Alternate way to embed resources, but crashes with duplicates
+//    generateReleaseResources.doFirst { //Works partially
+//        embedResourceFiles()
+//    }
+
+}
+
+private List embedLibraryResources(List inputResourceSet) {
+    //We need to do this trickery here since the class declared here and that used by the runtime
+    //are different and results in class cast error
+    def ResourceSetClass = inputResourceSet.get(0).class
+
+    List newInputResourceSet = new ArrayList()
+
+    // Iterate in reverse order so that the first declarations have higher precedence
+    configurations.embedded.allDependencies.reverseEach {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+
+        try {
+            def rs = ResourceSetClass.newInstance(["${it.version}"] as Object[])
+            rs.addSource(file("$aarPath/res"))
+            println "ResourceSet is " + rs
+            inputResourceSet += rs
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    return inputResourceSet
+}
+
+/**
+ * Embedding resource files this way is easy, but it does not allow duplicate values in resource files
+ */
+//private void embedResourceFiles() {
+//    configurations.embedded.allDependencies.each {
+//        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+//
+//        // Merge Resources
+//        android.sourceSets.main.res.srcDirs += file("$aarPath/res")
+//    }
+//}
+
+/**
+ * Assets are simple files, so just adding them to source set seems to work.
+ */
+private void embedAssets() {
+    configurations.embedded.allDependencies.each {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+
+        // Merge Assets
+        android.sourceSets.main.assets.srcDirs += file("$aarPath/assets")
+    }
+}
+
+/**
+ * To embed the class files, we simply explode them in the proper place. Android's packager will
+ * then take care of them and merge them into the classes.jar
+ */
+private void embedJavaJars() {
+    configurations.embedded.allDependencies.each {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+
+        // Collect list of all jar files
+        FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
+        jars += fileTree(dir: "$aarPath/jars/libs", include: ['*.jar']);
+
+        println "Embedding jars : " + jars
+
+        // Explode all jar files to classes so that they can be proguarded
+        jars.visit {
+            FileVisitDetails element ->
+                copy {
+                    from(zipTree(element.file))
+                    into("build/intermediates/classes/release/")
+                }
+        }
+    }
+}
+
+/**
+ * For some reason, adding to the jniLibs source set does not work. So we simply copy all files.
+ */
+private void embedJniLibs() {
+    configurations.embedded.allDependencies.each {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+
+        // Copy JNI Folders
+        copy {
+            from fileTree(dir: "$aarPath/jni")
+            into file("build/intermediates/bundles/release/jni")
+        }
+    }
+}
+
+/**
+ * Embedding R.java from the embedded libraries is problematic since the constant value changes when
+ * included in the final app. For this reason, the app build process generates the R.class for each
+ * included package. We solve this by generating the R.java for the embedded package and mapping each
+ * entry to the fat library's value. This way, when the fat library's R.class is generated by the
+ * app, the embedded R.class automatically gets the correct value.
+ */
+private void embedRClassFiles() {
+    def libPackageName = new XmlParser().parse(android.sourceSets.main.manifest.srcFile).@package
+
+    configurations.embedded.allDependencies.each {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+
+        def aarManifest = new XmlParser().parse(file("$aarPath/AndroidManifest.xml"));
+        def aarPackageName = aarManifest.@package
+        String packagePath = aarPackageName.replace('.', '/')
+
+        // Generate the R.java file and map to current project's R.java
+        // This will recreate the class file
+        def rTxt = file("$aarPath/R.txt")
+        def rMap = new ConfigObject()
+
+        if (rTxt.exists()) {
+            rTxt.eachLine {
+                line ->
+                    def (type, subclass, name, value) = line.tokenize(' ')
+                    rMap[subclass].putAt(name, type)
+            }
+        }
+
+        def sb = "package $aarPackageName;" << '\n' << '\n'
+        sb << 'public final class R {' << '\n'
+
+        rMap.each {
+            subclass, values ->
+                sb << "    public static final class $subclass {" << '\n'
+                values.each {
+                    name, type ->
+                        sb << "        public static $type $name = ${libPackageName}.R.${subclass}.${name};" << '\n'
+                }
+                sb << "    }" << '\n'
+        }
+
+        sb << '}' << '\n'
+
+        // println sb
+
+        mkdir("build/generated/source/r/release/$packagePath")
+        file("build/generated/source/r/release/$packagePath/R.java").write(sb.toString())
+    }
+}
+
+private void embedManifests() {
+    def MergeTypeApp = MergeType.APPLICATION
+    def MergeTypeLib = MergeType.LIBRARY
+
+    List<File> manifests = new ArrayList<>()
+
+    // the list of dependency must be reversed to use the right overlay order.
+    configurations.embedded.allDependencies.reverseEach {
+        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+        manifests.add(file("$aarPath/AndroidManifest.xml"))
+    }
+
+    embedLibraryManifests(MergeTypeApp, manifests)
+}
+
+private void embedLibraryManifests(MergeType mergeType, List<File> libraryManifests) {
+    ILogger mLogger = new MiLogger()
+    File reportFile = file("build/embedManifest.txt")
+
+    File origManifest = file("build/intermediates/bundles/release/AndroidManifest.xml")
+    File copyManifest = file("build/intermediates/bundles/release/AndroidManifest.orig.xml")
+    File aaptManifest = file("build/intermediates/bundles/release/aapt/AndroidManifest.xml")
+
+    copy {
+        from origManifest.parentFile
+        into copyManifest.parentFile
+        include origManifest.name
+        rename(origManifest.name, copyManifest.name)
+    }
+
+    String outManifestLocation = origManifest.absolutePath
+    String outAaptSafeManifestLocation = aaptManifest.absolutePath
+
+    try {
+        Invoker manifestMergerInvoker = ManifestMerger2.newMerger(copyManifest, mLogger, mergeType)
+
+        if (mergeType == MergeType.LIBRARY) {
+            manifestMergerInvoker.addFlavorAndBuildTypeManifests(overlays.toArray(new File[overlays.size()]))
+        } else if (mergeType == MergeType.APPLICATION) {
+            manifestMergerInvoker.addLibraryManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
+        } else {
+            throw new RuntimeException("Unknown Merge Type");
+        }
+
+        // manifestMergerInvoker.setPlaceHolderValues(placeHolders)
+        manifestMergerInvoker.setMergeReportFile(reportFile);
+
+        MergingReport mergingReport = manifestMergerInvoker.merge();
+
+        mLogger.info("Merging result:" + mergingReport.getResult());
+        MergingReport.Result result = mergingReport.getResult();
+        switch (result) {
+            case MergingReport.Result.WARNING:
+                mergingReport.log(mLogger);
+        // fall through since these are just warnings.
+            case MergingReport.Result.SUCCESS:
+                XmlDocument xmlDocument = mergingReport.getMergedDocument().get();
+                try {
+                    String annotatedDocument = mergingReport.getActions().blame(xmlDocument);
+                    mLogger.verbose(annotatedDocument);
+                } catch (Exception e) {
+                    mLogger.error(e, "cannot print resulting xml");
+                }
+                save(xmlDocument, new File(outManifestLocation));
+                if (outAaptSafeManifestLocation != null) {
+                    new PlaceholderEncoder().visit(xmlDocument);
+                    save(xmlDocument, new File(outAaptSafeManifestLocation));
+                }
+                mLogger.info("Merged manifest saved to " + outManifestLocation);
+                break;
+            case MergingReport.Result.ERROR:
+                mergingReport.log(mLogger);
+                throw new RuntimeException(mergingReport.getReportString());
+            default:
+                throw new RuntimeException("Unhandled result type : " + mergingReport.getResult());
+        }
+    } catch (RuntimeException e) {
+        // TODO: unacceptable.
+        e.printStackTrace()
+        throw new RuntimeException(e);
+    }
+}
+
+private void save(XmlDocument xmlDocument, File out) {
+    try {
+        Files.write(xmlDocument.prettyPrint(), out, Charsets.UTF_8);
+    } catch (IOException e) {
+        throw new RuntimeException(e);
+    }
+}
+
+class MiLogger implements ILogger {
+
+    @Override
+    void error(
+            @com.android.annotations.Nullable Throwable t,
+            @com.android.annotations.Nullable String msgFormat, Object... args) {
+        System.err.println(String.format("========== ERROR : " + msgFormat, args))
+        if (t) t.printStackTrace(System.err)
+    }
+
+    @Override
+    void warning(@NonNull String msgFormat, Object... args) {
+        System.err.println(String.format("========== WARNING : " + msgFormat, args))
+    }
+
+    @Override
+    void info(@NonNull String msgFormat, Object... args) {
+        System.out.println(String.format("========== INFO : " + msgFormat, args))
+    }
+
+    @Override
+    void verbose(@NonNull String msgFormat, Object... args) {
+        // System.out.println(String.format("========== DEBUG : " + msgFormat, args))
+    }
+}
