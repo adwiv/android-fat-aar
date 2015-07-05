@@ -8,6 +8,7 @@ while maintaining a modular structure within the project. The benefit of a fat a
 proguard the combined code instead of proguarding each and every subproject which is not that effective.
 
 **What doesn't work?**
+
 1. Manifest placeholders that are expected to be filled in by the application
 2. AIDL File merger - I do not use aidl files
 3. ?
