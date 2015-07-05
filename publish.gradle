@@ -1,0 +1,41 @@
+////////////////////////////////////////////
+//////////// MAVEN PUBLISHING //////////////
+////////////////////////////////////////////
+apply plugin: 'maven-publish'
+
+publishing {
+    publications {
+        androidLibs(MavenPublication) {
+            artifact bundleRelease
+
+            //The publication doesn't know about our dependencies, so we have to manually add them to the pom
+            pom.withXml {
+                def dependenciesNode = asNode().appendNode('dependencies')
+                //Iterate over the compile dependencies (we don't want the test ones), adding a <dependency> node for each
+                configurations.compile.allDependencies.each {
+                    def isEmbedded = configurations.embedded.allDependencies.contains(it)
+                    def hasGroup = it.group != null
+                    def hasName = (it.name != null || "unspecified".equals(it.name))
+                    def hasVersion = it.version != null
+
+                    if (!isEmbedded && hasGroup && hasName && hasVersion) {
+                        def dependencyNode = dependenciesNode.appendNode('dependency')
+                        dependencyNode.appendNode('groupId', it.group)
+                        dependencyNode.appendNode('artifactId', it.name)
+                        dependencyNode.appendNode('version', it.version)
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            url "/tmp/releases"
+            // url "http://myserver/maven"
+            credentials {
+                username nexus_user
+                password nexus_pass
+            }
+        }
+    }
+}
