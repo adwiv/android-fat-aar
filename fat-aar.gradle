@@ -285,7 +285,7 @@ private void embedLibraryManifests(MergeType mergeType, List<File> libraryManife
         Invoker manifestMergerInvoker = ManifestMerger2.newMerger(copyManifest, mLogger, mergeType)
 
         if (mergeType == MergeType.LIBRARY) {
-            manifestMergerInvoker.addFlavorAndBuildTypeManifests(overlays.toArray(new File[overlays.size()]))
+            manifestMergerInvoker.addFlavorAndBuildTypeManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
         } else if (mergeType == MergeType.APPLICATION) {
             manifestMergerInvoker.addLibraryManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
         } else {
