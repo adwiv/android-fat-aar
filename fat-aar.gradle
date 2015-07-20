@@ -24,6 +24,9 @@
 
  For more information, please refer to <http://unlicense.org/>
  */
+
+
+
 import com.android.annotations.NonNull
 import com.android.manifmerger.ManifestMerger2
 import com.android.manifmerger.ManifestMerger2.Invoker
@@ -34,7 +37,6 @@ import com.android.manifmerger.XmlDocument
 import com.android.utils.ILogger
 import com.google.common.base.Charsets
 import com.google.common.io.Files
-
 /**
  * Fat AAR Lib generator v 0.1
  * Latest version available at https://github.com/adwiv/android-fat-aar
@@ -64,92 +66,78 @@ dependencies {
     compile configurations.embedded
 }
 
+ext.embeddedAarDirs = new ArrayList<String>()
+
 afterEvaluate {
-    // Merge Assets
-    generateReleaseAssets.doFirst { //Works
-        embedAssets()
-    }
 
-    // Merge compiled classes and jars
-    compileReleaseJava.doLast { //Perfect
-        embedJavaJars()
-    }
-
-    // Generate R.class for each embedded package
-    processReleaseResources.doLast { //Works?
-        embedRClassFiles()
-    }
-
-    // Merge Native libraries
-    packageReleaseJniLibs.doLast { //Perfect
-        embedJniLibs()
-    }
-
-    // Merge Embedded Manifests
-    processReleaseManifest.doLast { //Works?
-        embedManifests()
-    }
-
-    // Embed Resources by overwriting the inputResourceSets
-    packageReleaseResources.doFirst {
-        def oldInputResourceSet = packageReleaseResources.inputResourceSets
-        packageReleaseResources.conventionMapping.map("inputResourceSets") {
-            embedLibraryResources(oldInputResourceSet)
+    // the list of dependency must be reversed to use the right overlay order.
+    def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
+    dependencies.reverseEach {
+        def aarPath = "build/intermediates/exploded-aar/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
+        if (!embeddedAarDirs.contains(aarPath)) {
+            embeddedAarDirs.add(aarPath)
         }
     }
 
-    // Alternate way to embed resources, but crashes with duplicates
-//    generateReleaseResources.doFirst { //Works partially
-//        embedResourceFiles()
-//    }
+    // Merge Assets
+    generateReleaseAssets.dependsOn embedAssets
 
+    // Embed Resources by overwriting the inputResourceSets
+    packageReleaseResources.dependsOn embedLibraryResources
+
+    // Merge Native libraries
+    embedJniLibs.mustRunAfter packageReleaseJniLibs
+    bundleRelease.dependsOn embedJniLibs
+
+    // Merge Embedded Manifests
+    embedManifests.mustRunAfter processReleaseManifest
+    bundleRelease.dependsOn embedManifests
+
+    // Generate R.java for each embedded package and ensure it is compiled
+    embedRClassFiles.mustRunAfter processReleaseResources
+    compileReleaseJava.dependsOn embedRClassFiles
+
+    // Merge compiled classes and jars
+    embedJavaJars.mustRunAfter compileReleaseJava
+    proguardRelease.dependsOn embedJavaJars
+    bundleRelease.dependsOn embedJavaJars
 }
 
-private List embedLibraryResources(List inputResourceSet) {
+task embedLibraryResources << {
+    def oldInputResourceSet = packageReleaseResources.inputResourceSets
+    packageReleaseResources.conventionMapping.map("inputResourceSets") {
+        getMergedInputResourceSets(oldInputResourceSet)
+    }
+}
+
+private List getMergedInputResourceSets(List inputResourceSet) {
     //We need to do this trickery here since the class declared here and that used by the runtime
     //are different and results in class cast error
     def ResourceSetClass = inputResourceSet.get(0).class
 
-    List newInputResourceSet = new ArrayList()
+    List newInputResourceSet = new ArrayList(inputResourceSet)
 
-    // Iterate in reverse order so that the first declarations have higher precedence
-    def dependencies = new ArrayList(configurations.embedded.allDependencies)
-    dependencies.reverseEach {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-
+    embeddedAarDirs.each { aarPath ->
         try {
-            def rs = ResourceSetClass.newInstance(["${it.version}"] as Object[])
+            def resname = (aarPath.split("build/intermediates/exploded-aar/")[1]).replace('/', ':');
+            def rs = ResourceSetClass.newInstance([resname] as Object[])
             rs.addSource(file("$aarPath/res"))
-            println "ResourceSet is " + rs
-            inputResourceSet += rs
+            // println "ResourceSet is " + rs
+            newInputResourceSet += rs
         } catch (Exception e) {
             e.printStackTrace();
             throw e;
         }
     }
 
-    return inputResourceSet
+    return newInputResourceSet
 }
-
-/**
- * Embedding resource files this way is easy, but it does not allow duplicate values in resource files
- */
-//private void embedResourceFiles() {
-//    configurations.embedded.allDependencies.each {
-//        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-//
-//        // Merge Resources
-//        android.sourceSets.main.res.srcDirs += file("$aarPath/res")
-//    }
-//}
 
 /**
  * Assets are simple files, so just adding them to source set seems to work.
  */
-private void embedAssets() {
-    configurations.embedded.allDependencies.each {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-
+task embedAssets << {
+    embeddedAarDirs.each { aarPath ->
         // Merge Assets
         android.sourceSets.main.assets.srcDirs += file("$aarPath/assets")
     }
@@ -159,15 +147,13 @@ private void embedAssets() {
  * To embed the class files, we simply explode them in the proper place. Android's packager will
  * then take care of them and merge them into the classes.jar
  */
-private void embedJavaJars() {
-    configurations.embedded.allDependencies.each {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-
+task embedJavaJars << {
+    embeddedAarDirs.each { aarPath ->
         // Collect list of all jar files
         FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
         jars += fileTree(dir: "$aarPath/jars/libs", include: ['*.jar']);
 
-        println "Embedding jars : " + jars
+        // println "Embedding jars : " + jars
 
         // Explode all jar files to classes so that they can be proguarded
         jars.visit {
@@ -183,10 +169,10 @@ private void embedJavaJars() {
 /**
  * For some reason, adding to the jniLibs source set does not work. So we simply copy all files.
  */
-private void embedJniLibs() {
-    configurations.embedded.allDependencies.each {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-
+task embedJniLibs << {
+    println "====== Embedding jni libs in " + project
+    embeddedAarDirs.each { aarPath ->
+        println "======= Copying JNI from $aarPath/jni"
         // Copy JNI Folders
         copy {
             from fileTree(dir: "$aarPath/jni")
@@ -202,11 +188,10 @@ private void embedJniLibs() {
  * entry to the fat library's value. This way, when the fat library's R.class is generated by the
  * app, the embedded R.class automatically gets the correct value.
  */
-private void embedRClassFiles() {
+task embedRClassFiles << {
     def libPackageName = new XmlParser().parse(android.sourceSets.main.manifest.srcFile).@package
 
-    configurations.embedded.allDependencies.each {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
+    embeddedAarDirs.each { aarPath ->
 
         def aarManifest = new XmlParser().parse(file("$aarPath/AndroidManifest.xml"));
         def aarPackageName = aarManifest.@package
@@ -247,25 +232,18 @@ private void embedRClassFiles() {
     }
 }
 
-private void embedManifests() {
-    def MergeTypeApp = MergeType.APPLICATION
-    def MergeTypeLib = MergeType.LIBRARY
+task embedManifests << {
+    ILogger mLogger = new MiLogger()
+    List<File> libraryManifests = new ArrayList<>()
 
-    List<File> manifests = new ArrayList<>()
-
-    // the list of dependency must be reversed to use the right overlay order.
-    def dependencies = new ArrayList(configurations.embedded.allDependencies)
-    dependencies.reverseEach {
-        def aarPath = "build/intermediates/exploded-aar/${it.group}/${it.name}/${it.version}"
-        manifests.add(file("$aarPath/AndroidManifest.xml"))
+    embeddedAarDirs.each { aarPath ->
+        if (!libraryManifests.contains(aarPath)) {
+            libraryManifests.add(file("$aarPath/AndroidManifest.xml"))
+            // println "==== Added $aarPath Manifest"
+        }
     }
 
-    embedLibraryManifests(MergeTypeApp, manifests)
-}
-
-private void embedLibraryManifests(MergeType mergeType, List<File> libraryManifests) {
-    ILogger mLogger = new MiLogger()
-    File reportFile = file("build/embedManifest.txt")
+    File reportFile = file("build/embedManifestReport.txt")
 
     File origManifest = file("build/intermediates/bundles/release/AndroidManifest.xml")
     File copyManifest = file("build/intermediates/bundles/release/AndroidManifest.orig.xml")
@@ -282,15 +260,9 @@ private void embedLibraryManifests(MergeType mergeType, List<File> libraryManife
     String outAaptSafeManifestLocation = aaptManifest.absolutePath
 
     try {
-        Invoker manifestMergerInvoker = ManifestMerger2.newMerger(copyManifest, mLogger, mergeType)
+        Invoker manifestMergerInvoker = ManifestMerger2.newMerger(copyManifest, mLogger, MergeType.APPLICATION)
 
-        if (mergeType == MergeType.LIBRARY) {
-            manifestMergerInvoker.addFlavorAndBuildTypeManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
-        } else if (mergeType == MergeType.APPLICATION) {
-            manifestMergerInvoker.addLibraryManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
-        } else {
-            throw new RuntimeException("Unknown Merge Type");
-        }
+        manifestMergerInvoker.addLibraryManifests(libraryManifests.toArray(new File[libraryManifests.size()]))
 
         // manifestMergerInvoker.setPlaceHolderValues(placeHolders)
         manifestMergerInvoker.setMergeReportFile(reportFile);
