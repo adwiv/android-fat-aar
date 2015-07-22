@@ -11,7 +11,8 @@ proguard the combined code instead of proguarding each and every subproject whic
 
 1. Manifest placeholders that are expected to be filled in by the application
 2. AIDL File merger - I do not use aidl files
-3. ?
+3. Multiple build types - only single build type (release) is supported out of the box
+4. ?
 
 **Step 1: Apply the gradle file** 
 
