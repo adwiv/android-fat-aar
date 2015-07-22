@@ -47,7 +47,7 @@ The dependencies with keyword `embedded` will be merged while the others will re
 **Step 3: Remove embedded dependencies from exported dependency list**
 
 Now that you have embedded your sub projects into the main library, you need to ensure that anyone using 
-your library does not resolve the embedded projects as transitive dependencies. Otherwise you will get 
+your library does not resolve the embedded projects as transitive dependencies. Otherwise he will get 
 duplicate class errors. 
 
 If you are using the fat library within the same project (maybe within a test app?), then you can simply define 
