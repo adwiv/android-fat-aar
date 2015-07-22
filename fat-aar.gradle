@@ -152,6 +152,8 @@ task embedJavaJars << {
         // Collect list of all jar files
         FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
         jars += fileTree(dir: "$aarPath/jars/libs", include: ['*.jar']);
+        jars += fileTree(dir: "$aarPath", include: ['*.jar']);
+        jars += fileTree(dir: "$aarPath/libs", include: ['*.jar']);
 
         // println "Embedding jars : " + jars
 
