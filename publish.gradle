@@ -8,22 +8,53 @@ publishing {
         androidLibs(MavenPublication) {
             artifact bundleRelease
 
+            List<String> embedList = new ArrayList<>();
+            Map<String, ResolvedDependency> depList = new LinkedHashMap<>();
+
+            //List all embedded dependencies
+            configurations.embedded.allDependencies.each {
+                def depName = String.format("%s:%s", it.group, it.name)
+                embedList.add(depName);
+            }
+
+            //Collect all first level dependencies except embedded ones
+            configurations.compile.resolvedConfiguration.firstLevelModuleDependencies.each {
+                ResolvedDependency dep ->
+                    def depName = String.format("%s:%s", dep.moduleGroup, dep.moduleName)
+                    if (!embedList.contains(depName) && !depList.containsKey(depName)) {
+                        depList.put(depName, dep)
+                    }
+            }
+
+            //Collect all second level dependencies of embedded ones
+            configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies.each {
+                //Second Level Depenencies
+                it.children.each {
+                    ResolvedDependency dep ->
+                        def depName = String.format("%s:%s", dep.moduleGroup, dep.moduleName)
+                        if (!embedList.contains(depName) && !depList.containsKey(depName)) {
+                            depList.put(depName, dep)
+                        }
+                }
+            }
+
             //The publication doesn't know about our dependencies, so we have to manually add them to the pom
             pom.withXml {
                 def dependenciesNode = asNode().appendNode('dependencies')
-                //Iterate over the compile dependencies (we don't want the test ones), adding a <dependency> node for each
-                configurations.compile.allDependencies.each {
-                    def isEmbedded = configurations.embedded.allDependencies.contains(it)
-                    def hasGroup = it.group != null
-                    def hasName = (it.name != null || "unspecified".equals(it.name))
-                    def hasVersion = it.version != null
 
-                    if (!isEmbedded && hasGroup && hasName && hasVersion) {
-                        def dependencyNode = dependenciesNode.appendNode('dependency')
-                        dependencyNode.appendNode('groupId', it.group)
-                        dependencyNode.appendNode('artifactId', it.name)
-                        dependencyNode.appendNode('version', it.version)
-                    }
+                //Iterate over the compile dependencies, adding a <dependency> node for each
+                depList.values().each {
+                    ResolvedDependency dep ->
+                        def hasGroup = dep.moduleGroup != null
+                        def hasName = (dep.moduleName != null || "unspecified".equals(dep.moduleName))
+                        def hasVersion = dep.moduleVersion != null
+
+                        if (hasGroup && hasName && hasVersion) {
+                            def dependencyNode = dependenciesNode.appendNode('dependency')
+                            dependencyNode.appendNode('groupId', dep.moduleGroup)
+                            dependencyNode.appendNode('artifactId', dep.moduleName)
+                            dependencyNode.appendNode('version', dep.moduleVersion)
+                        }
                 }
             }
         }
