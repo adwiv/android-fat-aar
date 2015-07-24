@@ -59,7 +59,7 @@ your fat-library dependency as non transitive.
 
 For external clients or use in another project; this can be achieved by removing these dependencies from the 
 generated pom.xml file. How to automate that will depend on how you are generating the pom file. I use 
-`maven-publish` plugin with the following pom generator. The complete `publish.gradle` file is also in the repository.
+`maven-publish` plugin with the following pom generator.
 
     pom.withXml {
         def dependenciesNode = asNode().appendNode('dependencies')
@@ -76,5 +76,7 @@ generated pom.xml file. How to automate that will depend on how you are generati
             }
         }
     }
+
+**The complete `publish.gradle` file (That also automatically adds the transitive dependencies as primary) is in the repository.**
 
 Hope this helps.
