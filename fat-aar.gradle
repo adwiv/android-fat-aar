@@ -163,7 +163,9 @@ task embedProguard << {
     def proguardRelease = file("build/intermediates/bundles/release/proguard.txt")
     embeddedAarDirs.each { aarPath ->
         try {
-            proguardRelease.append(file("$aarPath/proguard.txt").text)
+            def proguardLibFile = file("$aarPath/proguard.txt")
+            if (proguardLibFile.exists())
+                proguardRelease.append(proguardLibFile.text)
         } catch (Exception e) {
             e.printStackTrace();
             throw e;
