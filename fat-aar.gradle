@@ -52,9 +52,7 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:1.2.3'
-        classpath 'com.android.tools:annotations:24.2.3'
-        classpath 'com.android.tools.build:manifest-merger:24.2.3'
+        classpath 'com.android.tools.build:manifest-merger:24.3.0'
     }
 }
 
@@ -95,11 +93,22 @@ afterEvaluate {
 
     // Generate R.java for each embedded package and ensure it is compiled
     embedRClassFiles.mustRunAfter processReleaseResources
-    compileReleaseJava.dependsOn embedRClassFiles
 
-    // Merge compiled classes and jars
-    embedJavaJars.mustRunAfter compileReleaseJava
-    proguardRelease.dependsOn embedJavaJars
+    if (tasks.findByPath('compileReleaseJava') != null) {
+        compileReleaseJava.dependsOn embedRClassFiles
+        embedJavaJars.mustRunAfter compileReleaseJava
+    }
+    else if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
+        compileReleaseJavaWithJavac.dependsOn embedRClassFiles
+        embedJavaJars.mustRunAfter compileReleaseJavaWithJavac
+    } else {
+        NEEDTOFIX
+    }
+
+    if (tasks.findByPath('proguardRelease') != null) {
+        proguardRelease.dependsOn embedJavaJars
+    }
+
     bundleRelease.dependsOn embedJavaJars
 }
 
