@@ -26,7 +26,6 @@
  */
 
 
-
 import com.android.annotations.NonNull
 import com.android.manifmerger.ManifestMerger2
 import com.android.manifmerger.ManifestMerger2.Invoker
@@ -37,6 +36,7 @@ import com.android.manifmerger.XmlDocument
 import com.android.utils.ILogger
 import com.google.common.base.Charsets
 import com.google.common.io.Files
+
 /**
  * Fat AAR Lib generator v 0.1
  * Latest version available at https://github.com/adwiv/android-fat-aar
@@ -94,11 +94,13 @@ afterEvaluate {
     // Generate R.java for each embedded package and ensure it is compiled
     embedRClassFiles.mustRunAfter processReleaseResources
 
+    // Merge proguard files
+    embedLibraryResources.dependsOn embedProguard
+
     if (tasks.findByPath('compileReleaseJava') != null) {
         compileReleaseJava.dependsOn embedRClassFiles
         embedJavaJars.mustRunAfter compileReleaseJava
-    }
-    else if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
+    } else if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
         compileReleaseJavaWithJavac.dependsOn embedRClassFiles
         embedJavaJars.mustRunAfter compileReleaseJavaWithJavac
     } else {
@@ -149,6 +151,23 @@ task embedAssets << {
     embeddedAarDirs.each { aarPath ->
         // Merge Assets
         android.sourceSets.main.assets.srcDirs += file("$aarPath/assets")
+    }
+}
+
+/**
+ * Merge proguard.txt files from all library modules
+ * @author Marian Klühspies
+ */
+task embedProguard << {
+    println "====== Embedding proguard.txt files in " + project
+    def proguardRelease = file("build/intermediates/bundles/release/proguard.txt")
+    embeddedAarDirs.each { aarPath ->
+        try {
+            proguardRelease.append(file("$aarPath/proguard.txt").text)
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw e;
+        }
     }
 }
 
