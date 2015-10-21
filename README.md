@@ -7,6 +7,9 @@ There may be multiple reasons for wanting this. My reason was that I wanted to p
 while maintaining a modular structure within the project. The benefit of a fat aar file is that we can
 proguard the combined code instead of proguarding each and every subproject which is not that effective.
 
+**Changes**
+- Added support for consumerProguardFiles
+      
 **What doesn't work?**
 
 1. Manifest placeholders that are expected to be filled in by the application
