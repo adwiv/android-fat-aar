@@ -52,7 +52,7 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:manifest-merger:24.3.0'
+        classpath 'com.android.tools.build:manifest-merger:24.3.1'
     }
 }
 
@@ -84,7 +84,13 @@ afterEvaluate {
     packageReleaseResources.dependsOn embedLibraryResources
 
     // Merge Native libraries
-    embedJniLibs.mustRunAfter packageReleaseJniLibs
+    if (tasks.findByPath('packageReleaseJniLibs') != null) {
+        embedJniLibs.mustRunAfter packageReleaseJniLibs
+    } else if (tasks.findByPath('mergeReleaseJniLibFolders') != null) {
+        embedJniLibs.mustRunAfter mergeReleaseJniLibFolders
+    } else {
+        NEEDTOFIX
+    }
     bundleRelease.dependsOn embedJniLibs
 
     // Merge Embedded Manifests
@@ -156,7 +162,7 @@ task embedAssets << {
 
 /**
  * Merge proguard.txt files from all library modules
- * @author Marian Klühspies
+ * @author Marian KlÃ¼hspies
  */
 task embedProguard << {
     println "====== Embedding proguard.txt files in " + project
