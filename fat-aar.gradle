@@ -36,9 +36,12 @@ import com.android.manifmerger.XmlDocument
 import com.android.utils.ILogger
 import com.google.common.base.Charsets
 import com.google.common.io.Files
+import proguard.gradle.ProGuardTask
 
 /**
- * Fat AAR Lib generator v 0.1
+ * Fat AAR Lib generator v 0.2
+ * Target Gradle Version :: 2.2.0
+ *
  * Latest version available at https://github.com/adwiv/android-fat-aar
  * Please report issues at https://github.com/adwiv/android-fat-aar/issues
  *
@@ -52,7 +55,8 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:manifest-merger:24.3.1'
+        classpath 'com.android.tools.build:manifest-merger:25.2.0'
+        classpath 'net.sf.proguard:proguard-gradle:5.2.1'
     }
 }
 
@@ -65,13 +69,23 @@ dependencies {
 }
 
 ext.embeddedAarDirs = new ArrayList<String>()
+ext.build_dir = "build";
+
+ext.exploded_aar_dir = "build/intermediates/exploded-aar";
+ext.classs_release_dir = "build/intermediates/classes/release";
+ext.bundle_release_dir = "build/intermediates/bundles/release";
+ext.manifest_aaapt_dir = "build/intermediates/manifests/aapt/release";
+
+ext.base_r2x_dir = "build/fat-aar/release/";
+ext.pree_r2x_dir = "build/fat-aar/release/pre-r2x";
+ext.post_r2x_dir = "build/fat-aar/release/post-r2x";
 
 afterEvaluate {
 
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
-        def aarPath = "build/intermediates/exploded-aar/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
+        def aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
         if (!embeddedAarDirs.contains(aarPath)) {
             embeddedAarDirs.add(aarPath)
         }
@@ -83,31 +97,23 @@ afterEvaluate {
     // Embed Resources by overwriting the inputResourceSets
     packageReleaseResources.dependsOn embedLibraryResources
 
-    // Merge Native libraries
-    if (tasks.findByPath('packageReleaseJniLibs') != null) {
-        embedJniLibs.mustRunAfter packageReleaseJniLibs
-    } else if (tasks.findByPath('mergeReleaseJniLibFolders') != null) {
-        embedJniLibs.mustRunAfter mergeReleaseJniLibFolders
+    // TODO:?? Merge Native libraries - based on issue/15 - Untested
+    if (tasks.findByPath('transformNative_libsWithSyncJniLibsForRelease') != null) {
+        embedJniLibs.mustRunAfter transformNative_libsWithSyncJniLibsForRelease
     } else {
         NEEDTOFIX
     }
+
     bundleRelease.dependsOn embedJniLibs
 
     // Merge Embedded Manifests
     embedManifests.mustRunAfter processReleaseManifest
     bundleRelease.dependsOn embedManifests
 
-    // Generate R.java for each embedded package and ensure it is compiled
-    embedRClassFiles.mustRunAfter processReleaseResources
-
     // Merge proguard files
     embedLibraryResources.dependsOn embedProguard
 
-    if (tasks.findByPath('compileReleaseJava') != null) {
-        compileReleaseJava.dependsOn embedRClassFiles
-        embedJavaJars.mustRunAfter compileReleaseJava
-    } else if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
-        compileReleaseJavaWithJavac.dependsOn embedRClassFiles
+    if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
         embedJavaJars.mustRunAfter compileReleaseJavaWithJavac
     } else {
         NEEDTOFIX
@@ -115,6 +121,8 @@ afterEvaluate {
 
     if (tasks.findByPath('proguardRelease') != null) {
         proguardRelease.dependsOn embedJavaJars
+    } else if (tasks.findByPath('transformClassesAndResourcesWithProguardForRelease') != null) {
+        transformClassesAndResourcesWithProguardForRelease.dependsOn embedJavaJars
     }
 
     bundleRelease.dependsOn embedJavaJars
@@ -136,8 +144,8 @@ private List getMergedInputResourceSets(List inputResourceSet) {
 
     embeddedAarDirs.each { aarPath ->
         try {
-            def resname = (aarPath.split("build/intermediates/exploded-aar/")[1]).replace('/', ':');
-            def rs = ResourceSetClass.newInstance([resname] as Object[])
+            def resname = (aarPath.split(exploded_aar_dir)[1]).replace('/', ':');
+            def rs = ResourceSetClass.newInstance([resname, true] as Object[])
             rs.addSource(file("$aarPath/res"))
             // println "ResourceSet is " + rs
             newInputResourceSet += rs
@@ -166,7 +174,7 @@ task embedAssets << {
  */
 task embedProguard << {
     println "====== Embedding proguard.txt files in " + project
-    def proguardRelease = file("build/intermediates/bundles/release/proguard.txt")
+    def proguardRelease = file("$bundle_release_dir/proguard.txt")
     embeddedAarDirs.each { aarPath ->
         try {
             def proguardLibFile = file("$aarPath/proguard.txt")
@@ -179,11 +187,8 @@ task embedProguard << {
     }
 }
 
-/**
- * To embed the class files, we simply explode them in the proper place. Android's packager will
- * then take care of them and merge them into the classes.jar
- */
-task embedJavaJars << {
+
+task copyJavaJars << {
     embeddedAarDirs.each { aarPath ->
         // Collect list of all jar files
         FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
@@ -198,37 +203,16 @@ task embedJavaJars << {
             FileVisitDetails element ->
                 copy {
                     from(zipTree(element.file))
-                    into("build/intermediates/classes/release/")
+                    into(pree_r2x_dir)
                 }
         }
     }
 }
 
-/**
- * For some reason, adding to the jniLibs source set does not work. So we simply copy all files.
- */
-task embedJniLibs << {
-    println "====== Embedding jni libs in " + project
-    embeddedAarDirs.each { aarPath ->
-        println "======= Copying JNI from $aarPath/jni"
-        // Copy JNI Folders
-        copy {
-            from fileTree(dir: "$aarPath/jni")
-            into file("build/intermediates/bundles/release/jni")
-        }
-    }
-}
-
-/**
- * Embedding R.java from the embedded libraries is problematic since the constant value changes when
- * included in the final app. For this reason, the app build process generates the R.class for each
- * included package. We solve this by generating the R.java for the embedded package and mapping each
- * entry to the fat library's value. This way, when the fat library's R.class is generated by the
- * app, the embedded R.class automatically gets the correct value.
- */
-task embedRClassFiles << {
+task generateRJava(dependsOn: copyJavaJars) << {
+    // Now generate the R.java file for each embedded dependency
     def libPackageName = new XmlParser().parse(android.sourceSets.main.manifest.srcFile).@package
-
+    def mappingRText = "# Mapping file to convert R.class to X.class" << '\n' << '\n';
     embeddedAarDirs.each { aarPath ->
 
         def aarManifest = new XmlParser().parse(file("$aarPath/AndroidManifest.xml"));
@@ -249,24 +233,88 @@ task embedRClassFiles << {
         }
 
         def sb = "package $aarPackageName;" << '\n' << '\n'
-        sb << 'public final class R {' << '\n'
+        sb << 'public final class R {\n'
+
+        mappingRText << "${aarPackageName}.R -> ${aarPackageName}.X:\n"
+        mappingRText << "    void <init>() -> <init>\n"
 
         rMap.each {
             subclass, values ->
-                sb << "    public static final class $subclass {" << '\n'
+                sb << "  public static final class $subclass {" << '\n'
+
+                mappingRText << "${aarPackageName}.R\$$subclass -> ${aarPackageName}.X\$$subclass:\n";
+                mappingRText << "    void <init>() -> <init>\n"
+                mappingRText << "    void <clinit>() -> <clinit>\n"
+
                 values.each {
                     name, type ->
-                        sb << "        public static $type $name = ${libPackageName}.R.${subclass}.${name};" << '\n'
+                        sb << "    public static $type $name = ${libPackageName}.R.${subclass}.${name};" << '\n'
+                        mappingRText << "    $type $name -> $name\n"
                 }
                 sb << "    }" << '\n'
         }
 
         sb << '}' << '\n'
 
-        // println sb
+        mkdir("$pree_r2x_dir/$packagePath")
+        file("$pree_r2x_dir/$packagePath/R.java").write(sb.toString())
+    }
 
-        mkdir("build/generated/source/r/release/$packagePath")
-        file("build/generated/source/r/release/$packagePath/R.java").write(sb.toString())
+    //Force proguard to change R to X
+    file("$base_r2x_dir/mapping-r.txt").write(mappingRText.toString())
+}
+
+task generateRClass(type: JavaCompile, dependsOn: generateRJava) {
+    source = fileTree(dir: pree_r2x_dir, include: '**/*.java')
+    destinationDir = file(pree_r2x_dir)
+    dependencyCacheDir = file("$base_r2x_dir/cache")
+    targetCompatibility = 1.7
+    sourceCompatibility = 1.7
+    classpath = files(classs_release_dir)
+}
+
+task generateXClass(type: ProGuardTask, dependsOn: generateRClass) {
+    delete(post_r2x_dir)
+
+    injars pree_r2x_dir, filter: '!**/R.java'
+    outjars post_r2x_dir
+    libraryjars android.getBootClasspath()
+    libraryjars classs_release_dir
+    dontshrink
+    dontoptimize
+    dontpreverify
+    dontwarn '**.R'
+    dontwarn '**.R$*'
+    keep 'class !**.R {*;}'
+    keep 'class !**.R$* {*;}'
+    applymapping "$base_r2x_dir/mapping-r.txt"
+    printmapping "$base_r2x_dir/mapping.txt"
+    printconfiguration "$base_r2x_dir/config.txt"
+}
+
+/**
+ * To embed the class files, we need to change the R.class to X.class, so we explode it in another
+ * location, proguard it to modify R to X, and then finally copy it to build location
+ */
+task embedJavaJars(dependsOn: generateXClass) << {
+    copy {
+        from fileTree(dir: post_r2x_dir)
+        into file(classs_release_dir)
+    }
+}
+
+/**
+ * For some reason, adding to the jniLibs source set does not work. So we simply copy all files.
+ */
+task embedJniLibs << {
+    println "====== Embedding jni libs in " + project
+    embeddedAarDirs.each { aarPath ->
+        println "======= Copying JNI from $aarPath/jni"
+        // Copy JNI Folders
+        copy {
+            from fileTree(dir: "$aarPath/jni")
+            into file("$bundle_release_dir/jni")
+        }
     }
 }
 
@@ -281,11 +329,11 @@ task embedManifests << {
         }
     }
 
-    File reportFile = file("build/embedManifestReport.txt")
+    File reportFile = file("${build_dir}/embedManifestReport.txt")
 
-    File origManifest = file("build/intermediates/bundles/release/AndroidManifest.xml")
-    File copyManifest = file("build/intermediates/bundles/release/AndroidManifest.orig.xml")
-    File aaptManifest = file("build/intermediates/bundles/release/aapt/AndroidManifest.xml")
+    File origManifest = file("$bundle_release_dir/AndroidManifest.xml")
+    File copyManifest = file("$bundle_release_dir/AndroidManifest.orig.xml")
+    File aaptManifest = file("$manifest_aaapt_dir/AndroidManifest.xml")
 
     copy {
         from origManifest.parentFile
@@ -314,7 +362,7 @@ task embedManifests << {
                 mergingReport.log(mLogger);
         // fall through since these are just warnings.
             case MergingReport.Result.SUCCESS:
-                XmlDocument xmlDocument = mergingReport.getMergedDocument().get();
+                XmlDocument xmlDocument = mergingReport.getMergedXmlDocument(MergingReport.MergedManifestKind.MERGED);
                 try {
                     String annotatedDocument = mergingReport.getActions().blame(xmlDocument);
                     mLogger.verbose(annotatedDocument);
