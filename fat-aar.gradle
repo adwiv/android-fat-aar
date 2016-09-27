@@ -334,7 +334,7 @@ task embedManifests << {
     File origManifest = file("$bundle_release_dir/AndroidManifest.xml")
     File copyManifest = file("$bundle_release_dir/AndroidManifest.orig.xml")
     File aaptManifest = file("$manifest_aaapt_dir/AndroidManifest.xml")
-
+    
     copy {
         from origManifest.parentFile
         into copyManifest.parentFile
@@ -369,12 +369,13 @@ task embedManifests << {
                 } catch (Exception e) {
                     mLogger.error(e, "cannot print resulting xml");
                 }
-                save(xmlDocument, new File(outManifestLocation));
-                if (outAaptSafeManifestLocation != null) {
+                save(xmlDocument, origManifest);
+                mLogger.info("Merged manifest saved to " + origManifest);
+                if (aaptManifest.exists()) {
                     new PlaceholderEncoder().visit(xmlDocument);
-                    save(xmlDocument, new File(outAaptSafeManifestLocation));
+                    save(xmlDocument, aaptManifest);
+                    mLogger.info("Merged aapt safe manifest saved to " + aaptManifest);
                 }
-                mLogger.info("Merged manifest saved to " + outManifestLocation);
                 break;
             case MergingReport.Result.ERROR:
                 mergingReport.log(mLogger);
