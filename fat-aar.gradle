@@ -68,6 +68,7 @@ dependencies {
     compile configurations.embedded
 }
 
+ext.libraryPaths = new ArrayList<String>()
 ext.embeddedAarDirs = new ArrayList<String>()
 ext.build_dir = "build";
 
@@ -81,7 +82,6 @@ ext.pree_r2x_dir = "build/fat-aar/release/pre-r2x";
 ext.post_r2x_dir = "build/fat-aar/release/post-r2x";
 
 afterEvaluate {
-
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
@@ -89,6 +89,14 @@ afterEvaluate {
         if (!embeddedAarDirs.contains(aarPath)) {
             embeddedAarDirs.add(aarPath)
         }
+    }
+
+    dependencies.each {
+        collectDependencies(it)
+    }
+
+    libraryPaths.each {
+        println "Compile Dependency: $it";
     }
 
     // Merge Assets
@@ -126,6 +134,28 @@ afterEvaluate {
     }
 
     bundleRelease.dependsOn embedJavaJars
+}
+
+public void collectDependencies(ResolvedDependency it) {
+    it.moduleArtifacts.each {
+        artifact ->
+            if (artifact.type == 'aar') {
+                def aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
+                if (!embeddedAarDirs.contains(aarPath) && !libraryPaths.contains(aarPath))
+                    libraryPaths.add(aarPath)
+            } else if (artifact.type == 'jar') {
+                def artifactPath = artifact.file
+                if (!libraryPaths.contains(artifactPath))
+                    libraryPaths.add(artifactPath)
+            } else {
+                throw new Exception("Unhandled Artifact of type ${artifact.type}")
+            }
+    }
+
+    it.children.each {
+        child ->
+            collectDependencies(child)
+    }
 }
 
 task embedLibraryResources << {
@@ -275,11 +305,12 @@ task generateRClass(type: JavaCompile, dependsOn: generateRJava) {
 
 task generateXClass(type: ProGuardTask, dependsOn: generateRClass) {
     delete(post_r2x_dir)
+    println generateXClass
 
     injars pree_r2x_dir, filter: '!**/R.java'
     outjars post_r2x_dir
     libraryjars android.getBootClasspath()
-    libraryjars classs_release_dir
+    libraryjars libraryPaths
     dontshrink
     dontoptimize
     dontpreverify
@@ -334,16 +365,13 @@ task embedManifests << {
     File origManifest = file("$bundle_release_dir/AndroidManifest.xml")
     File copyManifest = file("$bundle_release_dir/AndroidManifest.orig.xml")
     File aaptManifest = file("$manifest_aaapt_dir/AndroidManifest.xml")
-    
+
     copy {
         from origManifest.parentFile
         into copyManifest.parentFile
         include origManifest.name
         rename(origManifest.name, copyManifest.name)
     }
-
-    String outManifestLocation = origManifest.absolutePath
-    String outAaptSafeManifestLocation = aaptManifest.absolutePath
 
     try {
         Invoker manifestMergerInvoker = ManifestMerger2.newMerger(copyManifest, mLogger, MergeType.APPLICATION)
