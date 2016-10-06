@@ -80,6 +80,7 @@ ext.manifest_aaapt_dir = "build/intermediates/manifests/aapt/release";
 ext.base_r2x_dir = "build/fat-aar/release/";
 ext.pree_r2x_dir = "build/fat-aar/release/pre-r2x";
 ext.post_r2x_dir = "build/fat-aar/release/post-r2x";
+ext.fat_aar_pro_file = "fataar-rules.pro";
 
 afterEvaluate {
     // the list of dependency must be reversed to use the right overlay order.
@@ -99,41 +100,38 @@ afterEvaluate {
         println "Compile Dependency: $it";
     }
 
-    // Merge Assets
-    generateReleaseAssets.dependsOn embedAssets
+    if (dependencies.size() > 0) {
+        // Merge Assets
+        generateReleaseAssets.dependsOn embedAssets
+        embedAssets.dependsOn prepareReleaseDependencies
 
-    // Embed Resources by overwriting the inputResourceSets
-    packageReleaseResources.dependsOn embedLibraryResources
+        // Embed Resources by overwriting the inputResourceSets
+        packageReleaseResources.dependsOn embedLibraryResources
+        embedLibraryResources.dependsOn prepareReleaseDependencies
 
-    // TODO:?? Merge Native libraries - based on issue/15 - Untested
-    if (tasks.findByPath('transformNative_libsWithSyncJniLibsForRelease') != null) {
-        embedJniLibs.mustRunAfter transformNative_libsWithSyncJniLibsForRelease
-    } else {
-        NEEDTOFIX
+        // Embed JNI Libraries
+        bundleRelease.dependsOn embedJniLibs
+        embedJniLibs.dependsOn transformNative_libsWithSyncJniLibsForRelease
+
+        // Merge Embedded Manifests
+        bundleRelease.dependsOn embedManifests
+        embedManifests.dependsOn processReleaseManifest
+
+        // Merge proguard files
+        embedLibraryResources.dependsOn embedProguard
+        embedProguard.dependsOn prepareReleaseDependencies
+
+        // Bundle the java classes
+        bundleRelease.dependsOn embedJavaJars
+        embedJavaJars.dependsOn compileReleaseJavaWithJavac
+
+        // If proguard is enabled, run the tasks that bundleRelease should depend on before proguard
+        if (tasks.findByPath('proguardRelease') != null) {
+            proguardRelease.dependsOn embedJavaJars
+        } else if (tasks.findByPath('transformClassesAndResourcesWithProguardForRelease') != null) {
+            transformClassesAndResourcesWithProguardForRelease.dependsOn embedJavaJars
+        }
     }
-
-    bundleRelease.dependsOn embedJniLibs
-
-    // Merge Embedded Manifests
-    embedManifests.mustRunAfter processReleaseManifest
-    bundleRelease.dependsOn embedManifests
-
-    // Merge proguard files
-    embedLibraryResources.dependsOn embedProguard
-
-    if (tasks.findByPath('compileReleaseJavaWithJavac') != null) {
-        embedJavaJars.mustRunAfter compileReleaseJavaWithJavac
-    } else {
-        NEEDTOFIX
-    }
-
-    if (tasks.findByPath('proguardRelease') != null) {
-        proguardRelease.dependsOn embedJavaJars
-    } else if (tasks.findByPath('transformClassesAndResourcesWithProguardForRelease') != null) {
-        transformClassesAndResourcesWithProguardForRelease.dependsOn embedJavaJars
-    }
-
-    bundleRelease.dependsOn embedJavaJars
 }
 
 public void collectDependencies(ResolvedDependency it) {
@@ -159,6 +157,8 @@ public void collectDependencies(ResolvedDependency it) {
 }
 
 task embedLibraryResources << {
+    println "Running FAT-AAR Task :embedLibraryResources"
+
     def oldInputResourceSet = packageReleaseResources.inputResourceSets
     packageReleaseResources.conventionMapping.map("inputResourceSets") {
         getMergedInputResourceSets(oldInputResourceSet)
@@ -192,6 +192,7 @@ private List getMergedInputResourceSets(List inputResourceSet) {
  * Assets are simple files, so just adding them to source set seems to work.
  */
 task embedAssets << {
+    println "Running FAT-AAR Task :embedAssets"
     embeddedAarDirs.each { aarPath ->
         // Merge Assets
         android.sourceSets.main.assets.srcDirs += file("$aarPath/assets")
@@ -203,7 +204,8 @@ task embedAssets << {
  * @author Marian Klühspies
  */
 task embedProguard << {
-    println "====== Embedding proguard.txt files in " + project
+    println "Running FAT-AAR Task :embedProguard"
+
     def proguardRelease = file("$bundle_release_dir/proguard.txt")
     embeddedAarDirs.each { aarPath ->
         try {
@@ -219,6 +221,12 @@ task embedProguard << {
 
 
 task copyJavaJars << {
+    println "Running FAT-AAR Task :copyJavaJars"
+
+    // Delete the r2x directory and recreate
+    file(base_r2x_dir).deleteDir()
+    mkdir(base_r2x_dir)
+
     embeddedAarDirs.each { aarPath ->
         // Collect list of all jar files
         FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
@@ -240,6 +248,8 @@ task copyJavaJars << {
 }
 
 task generateRJava(dependsOn: copyJavaJars) << {
+    println "Running FAT-AAR Task :generateRJava"
+
     // Now generate the R.java file for each embedded dependency
     def libPackageName = new XmlParser().parse(android.sourceSets.main.manifest.srcFile).@package
     def mappingRText = "# Mapping file to convert R.class to X.class" << '\n' << '\n';
@@ -303,10 +313,23 @@ task generateRClass(type: JavaCompile, dependsOn: generateRJava) {
     classpath = files(classs_release_dir)
 }
 
-task generateXClass(type: ProGuardTask, dependsOn: generateRClass) {
-    delete(post_r2x_dir)
-    println generateXClass
+task prepareXClass(dependsOn: generateRClass) << {
+    println "Running FAT-AAR Task :prepareXClass"
 
+    delete(post_r2x_dir)
+
+    def config_file = file(fat_aar_pro_file);
+    if (!config_file.exists()) {
+        def sb = "# Config file for internal proguard. " << "\n";
+        sb << "# Define the don't warn rules here in case of errors in generateXClass" << "\n\n";
+        sb << "#-dontwarn javax.annotation.**" << "\n";
+        sb << "#-dontwarn com.squareup.okhttp.**"
+
+        config_file.write(sb.toString());
+    }
+}
+
+task generateXClass(type: ProGuardTask, dependsOn: prepareXClass) {
     injars pree_r2x_dir, filter: '!**/R.java'
     outjars post_r2x_dir
     libraryjars android.getBootClasspath()
@@ -316,8 +339,12 @@ task generateXClass(type: ProGuardTask, dependsOn: generateRClass) {
     dontpreverify
     dontwarn '**.R'
     dontwarn '**.R$*'
-    keep 'class !**.R {*;}'
-    keep 'class !**.R$* {*;}'
+    keep 'class ** {*;}', includedescriptorclasses: true
+    keep 'interface ** {*;}', includedescriptorclasses: true
+    keepattributes
+    keeppackagenames
+    keepparameternames
+    configuration fat_aar_pro_file
     applymapping "$base_r2x_dir/mapping-r.txt"
     printmapping "$base_r2x_dir/mapping.txt"
     printconfiguration "$base_r2x_dir/config.txt"
@@ -328,6 +355,8 @@ task generateXClass(type: ProGuardTask, dependsOn: generateRClass) {
  * location, proguard it to modify R to X, and then finally copy it to build location
  */
 task embedJavaJars(dependsOn: generateXClass) << {
+    println "Running FAT-AAR Task :embedJavaJars"
+
     copy {
         from fileTree(dir: post_r2x_dir)
         into file(classs_release_dir)
@@ -338,7 +367,8 @@ task embedJavaJars(dependsOn: generateXClass) << {
  * For some reason, adding to the jniLibs source set does not work. So we simply copy all files.
  */
 task embedJniLibs << {
-    println "====== Embedding jni libs in " + project
+    println "Running FAT-AAR Task :embedJniLibs"
+
     embeddedAarDirs.each { aarPath ->
         println "======= Copying JNI from $aarPath/jni"
         // Copy JNI Folders
@@ -350,6 +380,8 @@ task embedJniLibs << {
 }
 
 task embedManifests << {
+    println "Running FAT-AAR Task :embedManifests"
+
     ILogger mLogger = new MiLogger()
     List<File> libraryManifests = new ArrayList<>()
 
