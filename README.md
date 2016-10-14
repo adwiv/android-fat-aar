@@ -1,7 +1,7 @@
 # android-fat-aar
 Gradle script that allows you to merge and embed dependencies in generted aar file. 
 
-** Thanks to **
+**Credits**
 
 [jksiezni](https://github.com/jksiezni) suggested an alternate way to embed R files which fixes ugly internal proguard hack.
 
