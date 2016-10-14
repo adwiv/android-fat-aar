@@ -36,10 +36,9 @@ import com.android.manifmerger.XmlDocument
 import com.android.utils.ILogger
 import com.google.common.base.Charsets
 import com.google.common.io.Files
-import proguard.gradle.ProGuardTask
 
 /**
- * Fat AAR Lib generator v 0.2
+ * Fat AAR Lib generator v 0.2.1
  * Target Gradle Version :: 2.2.0
  *
  * Latest version available at https://github.com/adwiv/android-fat-aar
@@ -56,7 +55,6 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:manifest-merger:25.2.0'
-        classpath 'net.sf.proguard:proguard-gradle:5.2.1'
     }
 }
 
@@ -68,36 +66,42 @@ dependencies {
     compile configurations.embedded
 }
 
-ext.libraryPaths = new ArrayList<String>()
+// Paths to embedded jar files
+ext.embeddedJars = new ArrayList<String>()
+// Paths to embedded aar projects
 ext.embeddedAarDirs = new ArrayList<String>()
+// List of embedded R classes
+ext.embeddedRClasses = new ArrayList<String>()
+
 ext.build_dir = "build";
 
 ext.exploded_aar_dir = "build/intermediates/exploded-aar";
 ext.classs_release_dir = "build/intermediates/classes/release";
 ext.bundle_release_dir = "build/intermediates/bundles/release";
 ext.manifest_aaapt_dir = "build/intermediates/manifests/aapt/release";
+ext.generated_rsrc_dir = "build/generated/source/r/release";
 
 ext.base_r2x_dir = "build/fat-aar/release/";
-ext.pree_r2x_dir = "build/fat-aar/release/pre-r2x";
-ext.post_r2x_dir = "build/fat-aar/release/post-r2x";
-ext.fat_aar_pro_file = "fataar-rules.pro";
 
 afterEvaluate {
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
         def aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
-        if (!embeddedAarDirs.contains(aarPath)) {
-            embeddedAarDirs.add(aarPath)
+        it.moduleArtifacts.each {
+            artifact ->
+                if (artifact.type == 'aar') {
+                    if (!embeddedAarDirs.contains(aarPath)) {
+                        embeddedAarDirs.add(aarPath)
+                    }
+                } else if (artifact.type == 'jar') {
+                    def artifactPath = artifact.file
+                    if (!embeddedJars.contains(artifactPath))
+                        embeddedJars.add(artifactPath)
+                } else {
+                    throw new Exception("Unhandled Artifact of type ${artifact.type}")
+                }
         }
-    }
-
-    dependencies.each {
-        collectDependencies(it)
-    }
-
-    libraryPaths.each {
-        println "Compile Dependency: $it";
     }
 
     if (dependencies.size() > 0) {
@@ -121,6 +125,10 @@ afterEvaluate {
         embedLibraryResources.dependsOn embedProguard
         embedProguard.dependsOn prepareReleaseDependencies
 
+        // Generate R.java files
+        compileReleaseJavaWithJavac.dependsOn generateRJava
+        generateRJava.dependsOn processReleaseResources
+
         // Bundle the java classes
         bundleRelease.dependsOn embedJavaJars
         embedJavaJars.dependsOn compileReleaseJavaWithJavac
@@ -131,28 +139,6 @@ afterEvaluate {
         } else if (tasks.findByPath('transformClassesAndResourcesWithProguardForRelease') != null) {
             transformClassesAndResourcesWithProguardForRelease.dependsOn embedJavaJars
         }
-    }
-}
-
-public void collectDependencies(ResolvedDependency it) {
-    it.moduleArtifacts.each {
-        artifact ->
-            if (artifact.type == 'aar') {
-                def aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
-                if (!embeddedAarDirs.contains(aarPath) && !libraryPaths.contains(aarPath))
-                    libraryPaths.add(aarPath)
-            } else if (artifact.type == 'jar') {
-                def artifactPath = artifact.file
-                if (!libraryPaths.contains(artifactPath))
-                    libraryPaths.add(artifactPath)
-            } else {
-                throw new Exception("Unhandled Artifact of type ${artifact.type}")
-            }
-    }
-
-    it.children.each {
-        child ->
-            collectDependencies(child)
     }
 }
 
@@ -220,39 +206,12 @@ task embedProguard << {
 }
 
 
-task copyJavaJars << {
-    println "Running FAT-AAR Task :copyJavaJars"
-
-    // Delete the r2x directory and recreate
-    file(base_r2x_dir).deleteDir()
-    mkdir(base_r2x_dir)
-
-    embeddedAarDirs.each { aarPath ->
-        // Collect list of all jar files
-        FileTree jars = fileTree(dir: "$aarPath/jars", include: ['*.jar'])
-        jars += fileTree(dir: "$aarPath/jars/libs", include: ['*.jar']);
-        jars += fileTree(dir: "$aarPath", include: ['*.jar']);
-        jars += fileTree(dir: "$aarPath/libs", include: ['*.jar']);
-
-        // println "Embedding jars : " + jars
-
-        // Explode all jar files to classes so that they can be proguarded
-        jars.visit {
-            FileVisitDetails element ->
-                copy {
-                    from(zipTree(element.file))
-                    into(pree_r2x_dir)
-                }
-        }
-    }
-}
-
-task generateRJava(dependsOn: copyJavaJars) << {
+task generateRJava << {
     println "Running FAT-AAR Task :generateRJava"
 
     // Now generate the R.java file for each embedded dependency
     def libPackageName = new XmlParser().parse(android.sourceSets.main.manifest.srcFile).@package
-    def mappingRText = "# Mapping file to convert R.class to X.class" << '\n' << '\n';
+
     embeddedAarDirs.each { aarPath ->
 
         def aarManifest = new XmlParser().parse(file("$aarPath/AndroidManifest.xml"));
@@ -273,93 +232,73 @@ task generateRJava(dependsOn: copyJavaJars) << {
         }
 
         def sb = "package $aarPackageName;" << '\n' << '\n'
-        sb << 'public final class R {\n'
-
-        mappingRText << "${aarPackageName}.R -> ${aarPackageName}.X:\n"
-        mappingRText << "    void <init>() -> <init>\n"
+        sb << 'public final class R {' << '\n'
 
         rMap.each {
             subclass, values ->
                 sb << "  public static final class $subclass {" << '\n'
-
-                mappingRText << "${aarPackageName}.R\$$subclass -> ${aarPackageName}.X\$$subclass:\n";
-                mappingRText << "    void <init>() -> <init>\n"
-                mappingRText << "    void <clinit>() -> <clinit>\n"
-
                 values.each {
                     name, type ->
                         sb << "    public static $type $name = ${libPackageName}.R.${subclass}.${name};" << '\n'
-                        mappingRText << "    $type $name -> $name\n"
                 }
                 sb << "    }" << '\n'
         }
 
         sb << '}' << '\n'
 
-        mkdir("$pree_r2x_dir/$packagePath")
-        file("$pree_r2x_dir/$packagePath/R.java").write(sb.toString())
-    }
+        mkdir("$generated_rsrc_dir/$packagePath")
+        file("$generated_rsrc_dir/$packagePath/R.java").write(sb.toString())
 
-    //Force proguard to change R to X
-    file("$base_r2x_dir/mapping-r.txt").write(mappingRText.toString())
-}
-
-task generateRClass(type: JavaCompile, dependsOn: generateRJava) {
-    source = fileTree(dir: pree_r2x_dir, include: '**/*.java')
-    destinationDir = file(pree_r2x_dir)
-    dependencyCacheDir = file("$base_r2x_dir/cache")
-    targetCompatibility = 1.7
-    sourceCompatibility = 1.7
-    classpath = files(classs_release_dir)
-}
-
-task prepareXClass(dependsOn: generateRClass) << {
-    println "Running FAT-AAR Task :prepareXClass"
-
-    delete(post_r2x_dir)
-
-    def config_file = file(fat_aar_pro_file);
-    if (!config_file.exists()) {
-        def sb = "# Config file for internal proguard. " << "\n";
-        sb << "# Define the don't warn rules here in case of errors in generateXClass" << "\n\n";
-        sb << "#-dontwarn javax.annotation.**" << "\n";
-        sb << "#-dontwarn com.squareup.okhttp.**"
-
-        config_file.write(sb.toString());
+        embeddedRClasses += "$packagePath/R.class"
+        embeddedRClasses += "$packagePath/R\$*.class"
     }
 }
 
-task generateXClass(type: ProGuardTask, dependsOn: prepareXClass) {
-    injars pree_r2x_dir, filter: '!**/R.java'
-    outjars post_r2x_dir
-    libraryjars android.getBootClasspath()
-    libraryjars libraryPaths
-    dontshrink
-    dontoptimize
-    dontpreverify
-    dontwarn '**.R'
-    dontwarn '**.R$*'
-    keep 'class ** {*;}', includedescriptorclasses: true
-    keep 'interface ** {*;}', includedescriptorclasses: true
-    keepattributes
-    keeppackagenames
-    keepparameternames
-    configuration fat_aar_pro_file
-    applymapping "$base_r2x_dir/mapping-r.txt"
-    printmapping "$base_r2x_dir/mapping.txt"
-    printconfiguration "$base_r2x_dir/config.txt"
+task collectRClass << {
+    delete base_r2x_dir
+    mkdir base_r2x_dir
+
+    copy {
+        from classs_release_dir
+        include embeddedRClasses
+        into base_r2x_dir
+    }
+}
+
+task embedRClass(type: org.gradle.jvm.tasks.Jar, dependsOn: collectRClass) {
+    destinationDir file("$bundle_release_dir/libs/")
+    from base_r2x_dir
 }
 
 /**
  * To embed the class files, we need to change the R.class to X.class, so we explode it in another
  * location, proguard it to modify R to X, and then finally copy it to build location
  */
-task embedJavaJars(dependsOn: generateXClass) << {
+task embedJavaJars(dependsOn: embedRClass) << {
     println "Running FAT-AAR Task :embedJavaJars"
 
-    copy {
-        from fileTree(dir: post_r2x_dir)
-        into file(classs_release_dir)
+    embeddedAarDirs.each { aarPath ->
+        // Explode all classes.jar files to classes so that they can be proguarded
+        copy {
+            from zipTree("$aarPath/jars/classes.jar")
+            into classs_release_dir
+        }
+
+        // Copy all additional jar files to bundle lib
+        FileTree jars = fileTree(dir: "$aarPath/jars", include: '*.jar', exclude: 'classes.jar')
+        jars += fileTree(dir: "$aarPath/jars/libs", include: '*.jar')
+        jars += fileTree(dir: "$aarPath/libs", include: '*.jar')
+
+        copy {
+            from jars
+            into file("$bundle_release_dir/libs")
+        }
+
+        // Copy all embedded jar files to bundle lib
+        copy {
+            from embeddedJars
+            into file("$bundle_release_dir/libs")
+        }
     }
 }
 
@@ -388,7 +327,6 @@ task embedManifests << {
     embeddedAarDirs.each { aarPath ->
         if (!libraryManifests.contains(aarPath)) {
             libraryManifests.add(file("$aarPath/AndroidManifest.xml"))
-            // println "==== Added $aarPath Manifest"
         }
     }
 
