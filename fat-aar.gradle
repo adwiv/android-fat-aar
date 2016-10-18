@@ -73,7 +73,8 @@ ext.embeddedAarDirs = new ArrayList<String>()
 // List of embedded R classes
 ext.embeddedRClasses = new ArrayList<String>()
 
-ext.build_dir = buildDir.path;
+// Change backslash to forward slash on windows
+ext.build_dir = buildDir.path.replace(File.separator, '/');
 
 ext.exploded_aar_dir = "$build_dir/intermediates/exploded-aar";
 ext.classs_release_dir = "$build_dir/intermediates/classes/release";
