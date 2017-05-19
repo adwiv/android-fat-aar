@@ -327,6 +327,12 @@ task embedJavaJars(dependsOn: embedRClass) << {
             jar_dir = "$aarPath"
         else
             jar_dir = "$aarPath/jars"
+
+        println jar_dir
+        println classs_release_dir
+        println bundle_release_dir
+        println embeddedJars
+
         copy {
             from zipTree(jar_dir + "/classes.jar")
             into classs_release_dir
