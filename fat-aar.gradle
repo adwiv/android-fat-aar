@@ -22,7 +22,7 @@
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  OTHER DEALINGS IN THE SOFTWARE.
 
- For more information, please refer to <http://unlicense.org/>
+ For more information, please refer to
  */
 
 
@@ -54,7 +54,7 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:manifest-merger:25.2.0'
+        classpath 'com.android.tools.build:manifest-merger:25.3.2'
     }
 }
 
@@ -67,32 +67,63 @@ dependencies {
 }
 
 // Paths to embedded jar files
-ext.embeddedJars = new ArrayList<String>()
+ext.embeddedJars = new ArrayList()
 // Paths to embedded aar projects
-ext.embeddedAarDirs = new ArrayList<String>()
+ext.embeddedAarDirs = new ArrayList()
 // List of embedded R classes
-ext.embeddedRClasses = new ArrayList<String>()
+ext.embeddedRClasses = new ArrayList()
 
 // Change backslash to forward slash on windows
 ext.build_dir = buildDir.path.replace(File.separator, '/');
-
+ext.root_dir = project.rootDir.absolutePath.replace(File.separator, '/');
 ext.exploded_aar_dir = "$build_dir/intermediates/exploded-aar";
 ext.classs_release_dir = "$build_dir/intermediates/classes/release";
-ext.bundle_release_dir = "$build_dir/intermediates/bundles/release";
 ext.manifest_aaapt_dir = "$build_dir/intermediates/manifests/aapt/release";
 ext.generated_rsrc_dir = "$build_dir/generated/source/r/release";
 
 ext.base_r2x_dir = "$build_dir/fat-aar/release/";
 
+def apiVersionString
+project.rootProject.buildscript.configurations.classpath.each {
+    if (it.name.contains("gradle-api"))
+        apiVersionString = it.name
+}
+apiVersionString = apiVersionString.replace('gradle-api-', '').replace('.jar', '');
+ext.gradleApiVersion = apiVersionString.substring(0, apiVersionString.lastIndexOf('.')).toFloat()
+
+if (gradleApiVersion >= 2.3f) {
+    ext.taskTransformNativeLib = "transformNativeLibsWithSyncJniLibsForRelease"
+    ext.bundle_release_dir = "$build_dir/intermediates/bundles/default";
+}
+else {
+    ext.taskTransformNativeLib = "transformNative_libsWithSyncJniLibsForRelease"
+    ext.bundle_release_dir = "$build_dir/intermediates/bundles/release";
+}
+
+
 afterEvaluate {
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
-        def aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
+        def aarPath;
+        if (gradleApiVersion >= 2.3f)
+            aarPath = "${root_dir}/${it.moduleName}/build/intermediates/bundles/default"
+        else
+            aarPath = "${exploded_aar_dir}/${it.moduleGroup}/${it.moduleName}/${it.moduleVersion}"
         it.moduleArtifacts.each {
             artifact ->
+
                 if (artifact.type == 'aar') {
                     if (!embeddedAarDirs.contains(aarPath)) {
+                        if( !artifact.file.isDirectory() ){
+                            println artifact.file
+                            println aarPath
+
+                            copy {
+                                from zipTree( artifact.file )
+                                into aarPath
+                            }
+                        }
                         embeddedAarDirs.add(aarPath)
                     }
                 } else if (artifact.type == 'jar') {
@@ -116,7 +147,7 @@ afterEvaluate {
 
         // Embed JNI Libraries
         bundleRelease.dependsOn embedJniLibs
-        embedJniLibs.dependsOn transformNative_libsWithSyncJniLibsForRelease
+        embedJniLibs.dependsOn "$taskTransformNativeLib"
 
         // Merge Embedded Manifests
         bundleRelease.dependsOn embedManifests
@@ -161,10 +192,20 @@ private List getMergedInputResourceSets(List inputResourceSet) {
 
     embeddedAarDirs.each { aarPath ->
         try {
-            def resname = (aarPath.split(exploded_aar_dir)[1]).replace('/', ':');
+            def resname
+            if (gradleApiVersion >= 2.3f) {
+                def parentProject = project.rootProject.name.toString()
+                def startIndex = aarPath.indexOf('/' + parentProject)
+                def endIndex = aarPath.indexOf('/build')
+                if (startIndex < 1 || endIndex < 1)
+                    return;
+                resname = aarPath.substring(startIndex, endIndex).replace('/', ':')
+            }
+            else
+                resname = (aarPath.split(exploded_aar_dir)[1]).replace('/', ':');
             def rs = ResourceSetClass.newInstance([resname, true] as Object[])
             rs.addSource(file("$aarPath/res"))
-            // println "ResourceSet is " + rs
+//            println "ResourceSet is " + rs
             newInputResourceSet += rs
         } catch (Exception e) {
             e.printStackTrace();
@@ -281,14 +322,19 @@ task embedJavaJars(dependsOn: embedRClass) << {
 
     embeddedAarDirs.each { aarPath ->
         // Explode all classes.jar files to classes so that they can be proguarded
+        def jar_dir
+        if (gradleApiVersion >= 2.3f)
+            jar_dir = "$aarPath"
+        else
+            jar_dir = "$aarPath/jars"
         copy {
-            from zipTree("$aarPath/jars/classes.jar")
+            from zipTree(jar_dir + "/classes.jar")
             into classs_release_dir
         }
 
         // Copy all additional jar files to bundle lib
-        FileTree jars = fileTree(dir: "$aarPath/jars", include: '*.jar', exclude: 'classes.jar')
-        jars += fileTree(dir: "$aarPath/jars/libs", include: '*.jar')
+        FileTree jars = fileTree(dir: jar_dir, include: '*.jar', exclude: 'classes.jar')
+        jars += fileTree(dir: jar_dir + "/libs", include: '*.jar')
         jars += fileTree(dir: "$aarPath/libs", include: '*.jar')
 
         copy {
@@ -324,7 +370,7 @@ task embedManifests << {
     println "Running FAT-AAR Task :embedManifests"
 
     ILogger mLogger = new MiLogger()
-    List<File> libraryManifests = new ArrayList<>()
+    List libraryManifests = new ArrayList<>()
 
     embeddedAarDirs.each { aarPath ->
         if (!libraryManifests.contains(aarPath)) {
