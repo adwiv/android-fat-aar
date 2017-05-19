@@ -1,5 +1,7 @@
 # android-fat-aar
-Gradle script that allows you to merge and embed dependencies in generted aar file. 
+Gradle script that allows you to merge and embed dependencies in generated aar file. 
+
+In this Fork you can find a fixed version who will also work with embedded .aar files !
 
 **Credits**
 
