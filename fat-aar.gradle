@@ -211,7 +211,8 @@ private List getMergedInputResourceSets(List inputResourceSet) {
                 resname = (aarPath.split(exploded_aar_dir)[1]).replace('/', ':');
             def rs = ResourceSetClass.newInstance([resname, true] as Object[])
             rs.addSource(file("$aarPath/res"))
-//            println "ResourceSet is " + rs
+            println "ResourceSet is " + rs
+            println resname
             newInputResourceSet += rs
         } catch (Exception e) {
             e.printStackTrace();
@@ -315,7 +316,6 @@ task collectRClass << {
     }
 }
 
-//TODO on dirait qu'il passe pas là
 task embedRClass(type: org.gradle.jvm.tasks.Jar, dependsOn: collectRClass) {
     println "EMBED R CLASS"
 
