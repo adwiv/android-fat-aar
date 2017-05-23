@@ -113,6 +113,8 @@ afterEvaluate {
         it.moduleArtifacts.each {
             artifact ->
 
+                println "ARTIFACT : "
+                println artifact
                 if (artifact.type == 'aar') {
                     if (!embeddedAarDirs.contains(aarPath)) {
                         if( !artifact.file.isDirectory() ){
