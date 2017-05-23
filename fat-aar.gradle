@@ -103,6 +103,8 @@ else {
 
 afterEvaluate {
 
+    println "GRADLE API 1 "
+    println gradleApiVersion
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
@@ -115,9 +117,9 @@ afterEvaluate {
         it.moduleArtifacts.each {
             artifact ->
 
-                println "GRADLE API "
+                println "GRADLE API 2 "
                 println gradleApiVersion
-                println "ARTIFACT 2 : "
+                println "ARTIFACT 3 : "
                 println artifact
                 if (artifact.type == 'aar') {
                     if (!embeddedAarDirs.contains(aarPath)) {
