@@ -117,7 +117,7 @@ afterEvaluate {
 
                 println "GRADLE API "
                 println gradleApiVersion
-                println "ARTIFACT : "
+                println "ARTIFACT 2 : "
                 println artifact
                 if (artifact.type == 'aar') {
                     if (!embeddedAarDirs.contains(aarPath)) {
