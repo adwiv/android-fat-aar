@@ -205,8 +205,16 @@ private List getMergedInputResourceSets(List inputResourceSet) {
             def resname
             if (gradleApiVersion >= 2.3f) {
                 def parentProject = project.rootProject.name.toString()
+                println "parent: "
+                println parentProject
+
                 def startIndex = aarPath.indexOf('/' + parentProject)
                 def endIndex = aarPath.indexOf('/build')
+
+                println "start"
+                println startIndex
+                println "end"
+                println endIndex
                 if (startIndex < 1 || endIndex < 1)
                     return;
                 resname = aarPath.substring(startIndex, endIndex).replace('/', ':')
