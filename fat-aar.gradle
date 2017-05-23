@@ -209,7 +209,7 @@ private List getMergedInputResourceSets(List inputResourceSet) {
                 println parentProject
 
                 def startIndex = aarPath.indexOf('/' + parentProject)
-                def endIndex = aarPath.indexOf('/build')
+                def endIndex = aarPath.indexOf('/build/')
 
                 println "start"
                 println startIndex
