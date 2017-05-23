@@ -196,8 +196,12 @@ private List getMergedInputResourceSets(List inputResourceSet) {
 
     List newInputResourceSet = new ArrayList(inputResourceSet)
 
+    println "getMergedInputResourceSets"
+
+    println embeddedAarDirs
     embeddedAarDirs.each { aarPath ->
         try {
+            println aarPath
             def resname
             if (gradleApiVersion >= 2.3f) {
                 def parentProject = project.rootProject.name.toString()
