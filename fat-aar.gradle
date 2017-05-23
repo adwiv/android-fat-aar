@@ -102,11 +102,12 @@ else {
 
 
 afterEvaluate {
+    println "GRADLE API "
+    println gradleApiVersion
+
     // the list of dependency must be reversed to use the right overlay order.
     def dependencies = new ArrayList(configurations.embedded.resolvedConfiguration.firstLevelModuleDependencies)
     dependencies.reverseEach {
-        println "GRADLE API "
-        println gradleApiVersion
 
         def aarPath;
         if (gradleApiVersion >= 2.3f)
