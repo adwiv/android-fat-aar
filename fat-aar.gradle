@@ -298,6 +298,7 @@ task generateRJava << {
 }
 
 task collectRClass << {
+    println "COLLECTRCLASS"
     delete base_r2x_dir
     mkdir base_r2x_dir
 
@@ -308,6 +309,7 @@ task collectRClass << {
     }
 }
 
+//TODO on dirait qu'il passe pas là
 task embedRClass(type: org.gradle.jvm.tasks.Jar, dependsOn: collectRClass) {
     destinationDir file("$bundle_release_dir/libs/")
     from base_r2x_dir
