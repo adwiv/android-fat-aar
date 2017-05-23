@@ -311,8 +311,12 @@ task collectRClass << {
 
 //TODO on dirait qu'il passe pas là
 task embedRClass(type: org.gradle.jvm.tasks.Jar, dependsOn: collectRClass) {
+    println "EMBED R CLASS"
+
     destinationDir file("$bundle_release_dir/libs/")
+    println destinationDir
     from base_r2x_dir
+    println base_r2x_dir
 }
 
 /**
