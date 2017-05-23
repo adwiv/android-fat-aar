@@ -117,8 +117,6 @@ afterEvaluate {
         it.moduleArtifacts.each {
             artifact ->
 
-                println "GRADLE API 2 "
-                println gradleApiVersion
                 println "ARTIFACT 3 : "
                 println artifact
                 if (artifact.type == 'aar') {
