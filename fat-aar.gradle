@@ -121,7 +121,7 @@ afterEvaluate {
                 println artifact
                 if (artifact.type == 'aar') {
                     if (!embeddedAarDirs.contains(aarPath)) {
-                        if( !artifact.file.isDirectory() ){
+                        if( artifact.file.isFile() ){
                             println artifact.file
                             println aarPath
 
