@@ -188,7 +188,6 @@ task embedAssets << {
 
 /**
  * Merge proguard.txt files from all library modules
- * @author Marian Klühspies
  */
 task embedProguard << {
     println "Running FAT-AAR Task :embedProguard"
@@ -198,7 +197,7 @@ task embedProguard << {
         try {
             def proguardLibFile = file("$aarPath/proguard.txt")
             if (proguardLibFile.exists())
-                proguardRelease.append(proguardLibFile.text)
+                proguardRelease.append("\n" + proguardLibFile.text)
         } catch (Exception e) {
             e.printStackTrace();
             throw e;
