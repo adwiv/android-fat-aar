@@ -1,3 +1,16 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:2.3.3'
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+
 apply plugin: 'com.android.library'
 
 // For publishing
@@ -6,7 +19,7 @@ version '1.2.3'
 
 android {
     compileSdkVersion 22
-    buildToolsVersion "22.0.1"
+    buildToolsVersion "25.0.0"
 
     defaultConfig {
         minSdkVersion 16
@@ -29,8 +42,8 @@ dependencies {
 
     // Order of dependencies decide which will have precedence in case of duplicates
     // during manifest / resource merger
-    embedded project(':librarytwo')
-    embedded project(':libraryone')
+//    embedded project(':librarytwo')
+//    embedded project(':libraryone')
     // We can embed android libraries from maven too
     embedded 'com.adwiv.internal:librarythree:1.0.0'
 
